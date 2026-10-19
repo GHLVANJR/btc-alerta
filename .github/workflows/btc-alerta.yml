@@ -1,0 +1,48 @@
+# Roda a cada 30 minutos e tambem pode ser disparado manualmente.
+# Obs: o cron do GitHub Actions costuma atrasar (minutos a horas).
+name: btc-alerta
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: btc-alerta
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Monitor BTC (1h/ATR, desvio, funding, 24h)
+        id: run
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          set +e
+          python3 btc_alerta.py
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Salvar state.json (evita alertas repetidos)
+        if: always()
+        run: |
+          git config user.name "btc-alerta[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          git diff --cached --quiet && echo "state sem mudanca" && exit 0
+          git commit -m "chore: atualiza state.json [skip ci]"
+          git pull --rebase --quiet || true
+          git push
+
+      - name: Falhar o job se houve alerta (e-mail do GitHub)
+        if: steps.run.outputs.code == '1'
+        run: exit 1
